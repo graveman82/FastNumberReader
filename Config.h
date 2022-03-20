@@ -1,3 +1,4 @@
+/*
 MIT License
 
 Copyright (c) 2022 Marat Sungatullin (MrSung, mrsung82, graveman, graveman82)
@@ -19,3 +20,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+*/
+
+#ifndef FAST_NUMBER_READER_CONFIG_H
+#define FAST_NUMBER_READER_CONFIG_H
+
+namespace fnr
+{
+typedef char CharType;
+typedef unsigned char ByteType;
+// use 0 or 1
+#define FNR_GETCHARCLASS 0
+
+} // end of fnr
+
+#endif // FAST_NUMBER_READER_CONFIG_H
+
