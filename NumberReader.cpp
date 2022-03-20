@@ -25,14 +25,19 @@ SOFTWARE.
 // Uncomment first if FastNumberReader is inside your project source directory
 // and set the correct path to it in your project settings.
 
-//#include "FastNumberReader/NumberReader.h"
-#include "NumberReader.h"
+//#define FNR_INCLUDED_IN_LARGER_PROJECT
+#ifdef FNR_INCLUDED_IN_LARGER_PROJECT
+#   include "FastNumberReader/NumberReader.h"
+#else
+#   include "NumberReader.h"
+#endif
 
 #include <new>
 #include <vector>
 #ifdef FNR_DEBUG
 #   include <assert.h>
-#   include <stdio.h>
+#else
+#define assert() ((void)0)
 #endif
 
 namespace fnr
@@ -66,6 +71,7 @@ static const CharType* alphabet[kCC_Count] =
     "uU"
 };
 
+#if (FNR_GETCHARCLASS==1)
 static int IsCharIn(CharType ch, const char* str)
 {
     if (!str)
@@ -78,6 +84,7 @@ static int IsCharIn(CharType ch, const char* str)
 
     return -1;
 }
+#endif
 
 static int ToDigit(CharType ch)
 {
@@ -251,7 +258,7 @@ private:
 
     struct Data
     {
-        friend class State;
+        friend struct State;
 
         Data() : state_(0), type_(kDouble)
         {
@@ -893,7 +900,7 @@ int NumberReader<float>::put(CharType ch)
 
 float NumberReader<float>::value() const
 {
-    return impl_->data<float>()->value();
+    return (float)impl_->data<float>()->value();
 }
 
 //-----------------------------------------------------------------------------
@@ -974,7 +981,7 @@ private:
 
     struct Data
     {
-        friend class State;
+        friend struct State;
 
         Data() : state_(0), type_(kLong)
         {
@@ -1059,7 +1066,7 @@ private:
         void AddIntDigitAsHex(CharType ch)
         {
             data_->value_ *= 16;
-            data_->value_ += (long)ToDigit(ch);printf("data_->value_:%x\n", data_->value_);
+            data_->value_ += (long)ToDigit(ch);
             data_->hexDigits_++;
         }
 
@@ -1526,7 +1533,7 @@ int NumberReader<short>::put(CharType ch)
 
 short NumberReader<short>::value() const
 {
-    return impl_->data<short>()->value();
+    return (short)impl_->data<short>()->value();
 }
 
 //-----------------------------------------------------------------------------

@@ -28,8 +28,12 @@ SOFTWARE.
 // Uncomment first if FastNumberReader is inside your project source directory
 // and set the correct path to it in your project settings.
 
-//#include "FastNumberReader/Config.h"
-#include "Config.h"
+//#define FNR_INCLUDED_IN_LARGER_PROJECT
+#ifdef FNR_INCLUDED_IN_LARGER_PROJECT
+#   include "FastNumberReader/Config.h"
+#else
+#   include "Config.h"
+#endif
 
 namespace fnr
 {
