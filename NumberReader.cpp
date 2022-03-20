@@ -32,6 +32,7 @@ SOFTWARE.
 #include <vector>
 #ifdef FNR_DEBUG
 #   include <assert.h>
+#   include <stdio.h>
 #endif
 
 namespace fnr
@@ -47,6 +48,8 @@ enum eCharClass
     kCC_Exp,
     kCC_SuffixF,
     kCC_SuffixLD,
+    kCC_HexDigit,
+    kCC_SuffixU,
     kCC_Count
 };
 
@@ -56,9 +59,11 @@ static const CharType* alphabet[kCC_Count] =
     "0123456789",
     ".",
     "xX",
-    "eE"
-    "fF"
-    "lL"
+    "eE",
+    "fF",
+    "lL",
+    "abcdefABCDEF",
+    "uU"
 };
 
 static int IsCharIn(CharType ch, const char* str)
@@ -85,9 +90,26 @@ static int ToDigit(CharType ch)
     return 0;
 }
 
+static int ToHexDigit(CharType ch)
+{
+    const char* str = alphabet[kCC_HexDigit];
+    for (int i = 0; str[i]; ++i)
+    {
+        if (ch == str[i])
+        {
+            if (i >= 6)
+                return i - 6 + 10;
+            else
+                return i + 10;
+        }
+    }
+
+    return 0;
+}
+
 //-----------------------------------------------------------------------------
 
-static eCharClass GetCharClass(const CharType ch)
+static eCharClass GetCharClass(const CharType ch, bool fHexDigit = false)
 {
 #if (FNR_GETCHARCLASS==0)
 
@@ -103,37 +125,67 @@ static eCharClass GetCharClass(const CharType ch)
     {
         return kCC_Sign;
     }
-    else if (ch >= 'e' && ch <= 'x')
+    else if ((ch == 'e' || ch == 'E') && !fHexDigit)
     {
-        switch (ch)
-        {
-            case 'e': return kCC_Exp;
-            case 'x': return kCC_Hex;
-            case 'f': return kCC_SuffixF;
-            case 'l': return kCC_SuffixLD;
-        }
+        return kCC_Exp;
     }
-    else if (ch >= 'E' && ch <= 'X')
+    else if ((ch == 'f' || ch == 'F') && !fHexDigit)
+    {
+        return kCC_SuffixF;
+    }
+    else if (ch >= 'L' && ch <= 'X')
     {
         switch (ch)
         {
-            case 'E': return kCC_Exp;
             case 'X': return kCC_Hex;
-            case 'F': return kCC_SuffixF;
             case 'L': return kCC_SuffixLD;
+            case 'U': return kCC_SuffixU;
         }
     }
+    else if (ch >= 'l' && ch <= 'x')
+    {
+        switch (ch)
+        {
+            case 'x': return kCC_Hex;
+            case 'l': return kCC_SuffixLD;
+            case 'u': return kCC_SuffixU;
+        }
+    }
+    else if (fHexDigit)
+    {
+        if (ch >= 'a' && ch <= 'f')
+        {
+            return kCC_HexDigit;
+        }
+        else if (ch >= 'A' && ch <= 'F')
+        {
+            return kCC_HexDigit;
+        }
+    }
+
+
 #elif (FNR_GETCHARCLASS==1)
     int i = -1;
-    for (int k = kCC_Sign; k < kCC_Count; ++k)
+    if (fHexDigit)
     {
-        i = IsCharIn(ch, alphabet[k]);
+        i = IsCharIn(ch, alphabet[kHexDigit]);
         if (-1 != i)
             return (eCharClass)k;
     }
+    else
+    {
+        for (int k = kCC_Sign; k < kCC_Count; ++k)
+        {
+            i = IsCharIn(ch, alphabet[k]);
+            if (-1 != i)
+                return (eCharClass)k;
+        }
+    }
+
 #else
 #   error "use 0 or 1 for FNR_GETCHARCLASS"
 #endif
+
     return kCC_None;
 }
 
@@ -163,6 +215,9 @@ double pow(double x, int e)
     return y;
 }
 
+//*****************************************************************************
+// DoubleReaderImpl
+//*****************************************************************************
 //-----------------------------------------------------------------------------
 class DoubleReaderImpl
 {
@@ -883,5 +938,601 @@ long double NumberReader<long double>::value() const
 bool NumberReader<long double>::valid() const
 {
     return impl_->data<long double>()->valid();
+}
+
+//*****************************************************************************
+// IntegerReaderImpl
+//*****************************************************************************
+//-----------------------------------------------------------------------------
+class IntegerReaderImpl
+{
+public:
+
+    enum eType
+    {
+        kLong,
+        kInt,
+        kShort,
+    };
+
+    enum eState
+    {
+        kInitState,
+        kWaitIDZ_State,
+        kWaitIDS_State,
+        kWaitH_State,
+        kWaitHDS_State,
+        kWaitTS_State,
+        kStateCount
+    };
+
+private:
+
+    struct State;
+
+    static State* GetState(eState state);
+
+    struct Data
+    {
+        friend class State;
+
+        Data() : state_(0), type_(kLong)
+        {
+            reset();
+        }
+
+        void reset()
+        {
+            state_ = 0;
+            valid_ = false;
+
+            sign_ = 1;
+            value_ = 0;
+
+            intDigits_ = 0;
+            hexDigits_ = 0;
+            trailingSpaces_ = 0;
+
+        }
+
+        void setType(eType type)
+        {
+            type_ = type;
+        }
+
+        int put(CharType ch)
+        {
+            if (!state_)
+                GoTo(kInitState);
+            return state_->put(ch);
+        }
+
+        void GoTo(eState state)
+        {
+            state_ = GetState(state);
+        }
+
+        eType type() const { return type_; }
+        long value() const{ return sign_ * value_; }
+        bool valid() const { return valid_; }
+        long sign() const { return sign_; }
+
+        int intDigits() const { return intDigits_; }
+        int hexDigits() const { return hexDigits_; }
+        int trailingSpaces() const { return trailingSpaces_; }
+
+    private:
+
+        void SetSign(bool neg) { neg ? sign_ = -1L : sign_ = 1L; }
+
+
+        State* state_;
+        bool valid_;
+        eType type_;
+
+        long sign_;
+        long value_;
+
+        int intDigits_;
+        int hexDigits_;
+        int trailingSpaces_;
+    };
+
+    struct State
+    {
+        virtual int put(CharType ch)
+        {
+            assert(data_);
+            return 0;
+        }
+
+    protected:
+        State(Data* data) : data_(data) { }
+
+        void AddIntDigit(CharType ch)
+        {
+            data_->value_ *= 10;
+            data_->value_ += (long)ToDigit(ch);
+            data_->intDigits_++;
+        }
+
+        void AddIntDigitAsHex(CharType ch)
+        {
+            data_->value_ *= 16;
+            data_->value_ += (long)ToDigit(ch);printf("data_->value_:%x\n", data_->value_);
+            data_->hexDigits_++;
+        }
+
+        void AddHexDigit(CharType ch)
+        {
+            data_->value_ *= 16;
+            data_->value_ += (long)ToHexDigit(ch);
+            data_->hexDigits_++;
+        }
+
+        void SetSign(CharType ch)
+        {
+            switch(ch)
+            {
+                case '-': data_->SetSign(true);  break;
+                case '+': data_->SetSign(false);  break;
+                default: break;
+            }
+        }
+
+        void SetValid() { data_->valid_ = true; }
+        void SetInvalid() { data_->valid_ = false; }
+
+        Data* data_;
+    };
+
+    IntegerReaderImpl();
+
+public:
+    ~IntegerReaderImpl();
+    static IntegerReaderImpl* Instance();
+
+    //-----------------------------------------------------------------------------
+
+    struct InitState : public State
+    {
+        InitState(Data* data) : State(data) {}
+
+        int put(CharType ch)
+        {
+            State::put(ch);
+
+            if (isSpace(ch))
+            {
+                return 1;
+            }
+
+            eCharClass charClass = GetCharClass(ch);
+
+            if (kCC_None == charClass)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            if (kCC_Sign == charClass)
+            {
+                SetSign(ch);
+                data_->GoTo(kWaitIDZ_State);
+                return 1;
+            }
+
+            if (kCC_Digit == charClass)
+            {
+                if (ch != '0')
+                {
+                    AddIntDigit(ch);
+                    SetValid();
+                    data_->GoTo(kWaitIDS_State);
+                }
+                else
+                {
+                    data_->GoTo(kWaitH_State);
+                }
+                return 1;
+            }
+
+            data_->reset();
+            return 0;
+
+        } // put()
+    }; // InitState class
+
+    //-----------------------------------------------------------------------------
+
+    struct WaitIDZ_State : public State
+    {
+        WaitIDZ_State(Data* data) : State(data) {}
+
+        int put(CharType ch)
+        {
+            State::put(ch);
+
+            eCharClass charClass = GetCharClass(ch);
+
+            if (kCC_None == charClass)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            if (kCC_Digit == charClass)
+            {
+                if (ch != '0')
+                {
+                    AddIntDigit(ch);
+                    SetValid();
+                    data_->GoTo(kWaitIDS_State);
+                }
+                else
+                {
+                    data_->GoTo(kWaitH_State);
+                }
+
+                return 1;
+            }
+
+            data_->reset();
+            return 0;
+
+        } // put()
+    }; // WaitIDZ_State class
+
+    //-----------------------------------------------------------------------------
+
+    struct WaitIDS_State : public State
+    {
+        WaitIDS_State(Data* data) : State(data) {}
+
+        int put(CharType ch)
+        {
+            State::put(ch);
+
+            if (isSpace(ch) && data_->valid())
+            {
+                return 1;
+            }
+
+            if (data_->trailingSpaces() > 0)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            eCharClass charClass = GetCharClass(ch);
+
+            if (kCC_None == charClass)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            if (kCC_Digit == charClass)
+            {
+                AddIntDigit(ch);
+                return 1;
+            }
+
+            if (kCC_SuffixLD == charClass)
+            {
+                data_->GoTo(kWaitTS_State);
+                return 1;
+            }
+
+            data_->reset();
+            return 0;
+
+        } // put()
+    }; // WaitIDS_State class
+
+    //-----------------------------------------------------------------------------
+
+    struct WaitH_State : public State
+    {
+        WaitH_State(Data* data) : State(data) {}
+
+        int put(CharType ch)
+        {
+            State::put(ch);
+
+            eCharClass charClass = GetCharClass(ch);
+
+            if (kCC_None == charClass)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            if (kCC_Hex == charClass)
+            {
+                data_->GoTo(kWaitHDS_State);
+                return 1;
+            }
+
+            data_->reset();
+            return 0;
+
+        } // put()
+    }; // WaitH_State class
+
+    //-----------------------------------------------------------------------------
+
+    struct WaitHDS_State : public State
+    {
+        WaitHDS_State(Data* data) : State(data) {}
+
+        int put(CharType ch)
+        {
+            State::put(ch);
+
+            if (isSpace(ch) && data_->valid())
+            {
+                return 1;
+            }
+
+            if (data_->trailingSpaces() > 0)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            eCharClass charClass = GetCharClass(ch, true);
+
+            if (kCC_None == charClass)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            if (kCC_Digit == charClass)
+            {
+                AddIntDigitAsHex(ch);
+                SetValid();
+                return 1;
+            }
+
+            if (kCC_HexDigit == charClass)
+            {
+                AddHexDigit(ch);
+                SetValid();
+                return 1;
+            }
+
+            if (kCC_SuffixLD == charClass)
+            {
+                data_->GoTo(kWaitTS_State);
+                return 1;
+            }
+
+            data_->reset();
+            return 0;
+
+        } // put()
+    }; // WaitHDS_State class
+
+
+    //-----------------------------------------------------------------------------
+
+    struct WaitTS_State : public State
+    {
+        WaitTS_State(Data* data) : State(data) {}
+
+        int put(CharType ch)
+        {
+            State::put(ch);
+
+            if (isSpace(ch) && data_->valid())
+            {
+                return 1;
+            }
+
+            if (data_->trailingSpaces() > 0)
+            {
+                data_->reset();
+                return 0;
+            }
+
+            data_->reset();
+            return 0;
+
+        } // put()
+    }; // WaitTS_State class
+
+    template<typename T>
+    Data* data(T = 0);
+
+private:
+    InitState       *initState_;
+    WaitIDZ_State   *waitIDZ_State_;
+    WaitIDS_State   *waitIDS_State_;
+    WaitH_State     *waitH_State_;
+    WaitHDS_State   *waitHDS_State_;
+    WaitTS_State    *waitTS_State_;
+
+    Data data_;
+
+    ByteType initStateMemory_       [sizeof(InitState)];
+    ByteType waitIDZ_StateMemory_   [sizeof(WaitIDZ_State)];
+    ByteType waitIDS_StateMemory_   [sizeof(WaitIDS_State)];
+    ByteType waitH_tateMemory_      [sizeof(WaitH_State)];
+    ByteType waitHDS_StateMemory_   [sizeof(WaitHDS_State)];
+    ByteType waitTS_StateMemory_    [sizeof(WaitTS_State)];
+
+    State* states_[kStateCount];
+
+    static IntegerReaderImpl* sInstance_;
+
+};
+
+//-----------------------------------------------------------------------------
+template<>
+IntegerReaderImpl::Data* IntegerReaderImpl::data(long) { data_.setType(kLong); return &data_; }
+
+template<>
+IntegerReaderImpl::Data* IntegerReaderImpl::data(int) { data_.setType(kInt); return &data_; }
+
+template<>
+IntegerReaderImpl::Data* IntegerReaderImpl::data(short) { data_.setType(kShort); return &data_; }
+
+//-----------------------------------------------------------------------------
+IntegerReaderImpl* IntegerReaderImpl::sInstance_ = 0;
+
+//-----------------------------------------------------------------------------
+IntegerReaderImpl* IntegerReaderImpl::Instance()
+{
+    static ByteType instanceMemory[sizeof(IntegerReaderImpl)];
+    if (!sInstance_)
+    {
+        sInstance_ = new (&instanceMemory[0]) IntegerReaderImpl();
+    }
+    return sInstance_;
+}
+//-----------------------------------------------------------------------------
+IntegerReaderImpl::IntegerReaderImpl()
+{
+    assert(!sInstance_);
+    sInstance_ = this;
+
+    initState_          = new (&initStateMemory_[0])        InitState(data<long>());
+    waitIDZ_State_      = new (&waitIDZ_StateMemory_[0])    WaitIDZ_State(data<long>());
+    waitIDS_State_      = new (&waitIDS_StateMemory_[0])    WaitIDS_State(data<long>());
+    waitH_State_        = new (&waitH_tateMemory_[0])       WaitH_State(data<long>());
+    waitHDS_State_      = new (&waitHDS_StateMemory_[0])    WaitHDS_State(data<long>());
+    waitTS_State_       = new (&waitTS_StateMemory_[0])     WaitTS_State(data<long>());
+
+    states_[kInitState]         = initState_;
+    states_[kWaitIDZ_State]     = waitIDZ_State_;
+    states_[kWaitIDS_State]     = waitIDS_State_;
+    states_[kWaitH_State]       = waitH_State_;
+    states_[kWaitHDS_State]     = waitHDS_State_;
+    states_[kWaitTS_State]      = waitTS_State_;
+}
+
+//-----------------------------------------------------------------------------
+
+IntegerReaderImpl::~IntegerReaderImpl()
+{
+    sInstance_ = 0;
+}
+//-----------------------------------------------------------------------------
+IntegerReaderImpl::State* IntegerReaderImpl::GetState(IntegerReaderImpl::eState state)
+{
+    return IntegerReaderImpl::Instance()->states_[state];
+}
+
+//*****************************************************************************
+// NumberReader<long>
+//*****************************************************************************
+
+//-----------------------------------------------------------------------------
+
+NumberReader<long>::NumberReader() : impl_(IntegerReaderImpl::Instance())
+{
+
+}
+
+//-----------------------------------------------------------------------------
+NumberReader<long>::~NumberReader()
+{
+    impl_->data<long>()->reset();
+}
+//-----------------------------------------------------------------------------
+
+int NumberReader<long>::put(CharType ch)
+{
+    return impl_->data<long>()->put(ch);
+}
+
+//-----------------------------------------------------------------------------
+
+long NumberReader<long>::value() const
+{
+    return impl_->data<long>()->value();
+}
+
+//-----------------------------------------------------------------------------
+
+bool NumberReader<long>::valid() const
+{
+    return impl_->data<long>()->valid();
+}
+
+//*****************************************************************************
+// NumberReader<int>
+//*****************************************************************************
+
+//-----------------------------------------------------------------------------
+
+NumberReader<int>::NumberReader() : impl_(IntegerReaderImpl::Instance())
+{
+
+}
+
+//-----------------------------------------------------------------------------
+NumberReader<int>::~NumberReader()
+{
+    impl_->data<int>()->reset();
+}
+//-----------------------------------------------------------------------------
+
+int NumberReader<int>::put(CharType ch)
+{
+    return impl_->data<int>()->put(ch);
+}
+
+//-----------------------------------------------------------------------------
+
+int NumberReader<int>::value() const
+{
+    return impl_->data<int>()->value();
+}
+
+//-----------------------------------------------------------------------------
+
+bool NumberReader<int>::valid() const
+{
+    return impl_->data<int>()->valid();
+}
+
+//*****************************************************************************
+// NumberReader<short>
+//*****************************************************************************
+
+//-----------------------------------------------------------------------------
+
+NumberReader<short>::NumberReader() : impl_(IntegerReaderImpl::Instance())
+{
+
+}
+
+//-----------------------------------------------------------------------------
+NumberReader<short>::~NumberReader()
+{
+    impl_->data<short>()->reset();
+}
+//-----------------------------------------------------------------------------
+
+int NumberReader<short>::put(CharType ch)
+{
+    return impl_->data<short>()->put(ch);
+}
+
+//-----------------------------------------------------------------------------
+
+short NumberReader<short>::value() const
+{
+    return impl_->data<short>()->value();
+}
+
+//-----------------------------------------------------------------------------
+
+bool NumberReader<short>::valid() const
+{
+    return impl_->data<short>()->valid();
 }
 } // end of fnr

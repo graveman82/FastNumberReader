@@ -95,6 +95,64 @@ private:
 
 };
 
+//*****************************************************************************
+class IntegerReaderImpl;
+
+//-----------------------------------------------------------------------------
+//
+template <>
+class NumberReader<long>
+{
+public:
+    NumberReader();
+    ~NumberReader();
+    int put(CharType ch);
+    long value() const;
+    bool valid() const;
+
+private:
+
+    IntegerReaderImpl* impl_;
+
+};
+
+//-----------------------------------------------------------------------------
+//
+template <>
+class NumberReader<int>
+{
+public:
+    NumberReader();
+    ~NumberReader();
+    int put(CharType ch);
+    int value() const;
+    bool valid() const;
+
+private:
+
+    IntegerReaderImpl* impl_;
+
+};
+
+//-----------------------------------------------------------------------------
+//
+template <>
+class NumberReader<short>
+{
+public:
+    NumberReader();
+    ~NumberReader();
+    int put(CharType ch);
+    short value() const;
+    bool valid() const;
+
+private:
+
+    IntegerReaderImpl* impl_;
+
+};
+
+
 } // end of fnr
 
 
